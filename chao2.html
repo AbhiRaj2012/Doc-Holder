@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Local WebUI</title>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --sidebar-bg: #11111b;
+            --header-bg: #181825;
+            --panel-bg: #313244;
+            --text-main: #cdd6f4;
+            --text-muted: #a6adc8;
+            --accent: #89b4fa;
+            --accent-hover: #b4befe;
+            --user-bubble: #313244;
+            --bot-bubble: transparent;
+            --danger: #f38ba8;
+            --success: #a6e3a1;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background-color: var(--bg-color); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar / History */
+        #sidebar { width: 260px; background-color: var(--sidebar-bg); display: flex; flex-direction: column; border-right: 1px solid #333; transition: width 0.3s; }
+        .sidebar-header { padding: 15px; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }
+        .logo { font-size: 16px; font-weight: bold; display: flex; align-items: center; gap: 8px; }
+        #new-chat-btn { width: 100%; background: var(--accent); color: #111; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        #new-chat-btn:hover { background: var(--accent-hover); }
+        
+        #history-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
+        .history-item { padding: 10px; background: transparent; border-radius: 6px; cursor: pointer; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid transparent; transition: 0.2s; color: var(--text-muted); }
+        .history-item:hover { background: var(--panel-bg); color: var(--text-main); }
+        .history-item.active { background: var(--panel-bg); border-color: var(--accent); color: var(--text-main); }
+
+        /* Main App Area */
+        #main-app { flex: 1; display: flex; flex-direction: column; height: 100vh; position: relative; }
+        
+        /* Drag & Drop Overlay */
+        #drop-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(30, 30, 46, 0.9); z-index: 100; align-items: center; justify-content: center; border: 4px dashed var(--accent); flex-direction: column; }
+        #drop-overlay h2 { color: var(--accent); font-size: 24px; pointer-events: none; }
+        
+        /* Header / Controls */
+        header { background-color: var(--header-bg); padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }
+        .controls { display: flex; align-items: center; gap: 12px; }
+        #status-indicator { padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; background: #444; }
+        .status-online { background: rgba(166, 227, 161, 0.2) !important; color: var(--success); }
+        .status-offline { background: rgba(243, 139, 168, 0.2) !important; color: var(--danger); }
+        
+        select, button.control-btn { background: var(--panel-bg); color: var(--text-main); border: 1px solid #444; padding: 8px 12px; border-radius: 6px; cursor: pointer; outline: none; }
+        button.control-btn:hover, select:hover { background: #45475a; }
+        
+        /* Chat Area */
+        main { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; scroll-behavior: smooth; }
+        .chat-container { width: 100%; max-width: 850px; display: flex; flex-direction: column; gap: 24px; padding-bottom: 40px; }
+        
+        .message-wrapper { display: flex; flex-direction: column; gap: 4px; max-width: 100%; position: relative; }
+        .message { display: flex; gap: 15px; padding: 16px; border-radius: 12px; line-height: 1.6; position: relative; }
+        .message.user { background-color: var(--user-bubble); align-self: flex-end; max-width: 85%; border-bottom-right-radius: 4px; }
+        .message.assistant { background-color: var(--bot-bubble); align-self: flex-start; width: 100%; }
+        
+        .avatar { font-size: 24px; user-select: none; }
+        .content { flex: 1; word-wrap: break-word; overflow-x: auto; max-width: 100%; }
+        
+        /* Copy Button */
+        .msg-copy-btn { position: absolute; top: 12px; right: 12px; background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 4px; opacity: 0; transition: 0.2s; }
+        .message-wrapper:hover .msg-copy-btn { opacity: 1; }
+        .msg-copy-btn:hover { color: var(--accent); background: rgba(255,255,255,0.1); }
+        
+        /* Input Area & Attachments */
+        footer { padding: 20px; display: flex; justify-content: center; background: linear-gradient(180deg, transparent, var(--bg-color) 20%); }
+        .input-wrapper { width: 100%; max-width: 850px; display: flex; flex-direction: column; gap: 10px; }
+        
+        #attachment-container { display: flex; flex-wrap: wrap; gap: 8px; }
+        .attachment-chip { display: flex; align-items: center; gap: 6px; background: var(--panel-bg); padding: 6px 12px; border-radius: 15px; font-size: 13px; border: 1px solid #555; }
+        .attachment-chip button { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 14px; font-weight: bold; }
+        
+        .input-box { display: flex; background: var(--panel-bg); border-radius: 12px; border: 1px solid #444; padding: 8px; align-items: flex-end; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        #attach-btn { background: transparent; border: none; font-size: 20px; padding: 10px; border-radius: 8px; color: var(--text-main); cursor: pointer; transition: 0.2s; }
+        #attach-btn:hover { background: rgba(255,255,255,0.1); }
+        
+        textarea { flex: 1; background: transparent; border: none; color: white; padding: 12px; font-size: 16px; font-family: inherit; resize: none; max-height: 200px; outline: none; min-height: 44px; overflow-y: auto;}
+        
+        #send-btn { background: var(--accent); color: #111; font-weight: bold; border: none; padding: 10px 20px; border-radius: 8px; height: 44px; cursor: pointer; transition: 0.2s; }
+        #send-btn:hover { background: var(--accent-hover); }
+        #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* === Markdown Typography (Preserved from original) === */
+        .content h1, .content h2, .content h3 { margin: 18px 0 10px 0; color: #fff; font-weight: 700; }
+        .content h1 { font-size: 1.6em; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        .content hr { border: 0; border-top: 1px solid #444; margin: 20px 0; }
+        .content strong { color: #fff; font-weight: 600; }
+        .list-item { display: flex; margin-bottom: 5px; margin-left: 5px; }
+        .list-bullet { margin-right: 10px; font-weight: bold; color: var(--text-muted); min-width: 15px; text-align: right; }
+        .inline-code { background: #444; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em; color: #fab387; }
+        
+        /* Code Blocks */
+        .code-block { background: #181825; border-radius: 8px; margin: 15px 0; border: 1px solid #333; overflow: hidden; }
+        .code-header { background: #11111b; padding: 8px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-family: monospace; color: #aaa; border-bottom: 1px solid #333; }
+        .copy-btn { background: #313244; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; }
+        .copy-btn:hover { background: #45475a; }
+        .code-block pre { padding: 15px; overflow-x: auto; margin: 0; }
+        .code-block code { font-family: monospace; font-size: 14px; color: #a6e3a1; }
+
+        /* Tables & Math */
+        .table-wrapper { overflow-x: auto; margin: 15px 0; border-radius: 8px; border: 1px solid #444; }
+        table { width: 100%; border-collapse: collapse; background: #181825; text-align: left; font-size: 14px; }
+        th, td { padding: 10px 15px; border-bottom: 1px solid #333; border-right: 1px solid #333; }
+        thead { background: #11111b; font-weight: bold; border-bottom: 2px solid #444; }
+        .math-inline { font-family: 'Cambria Math', serif; color: #89b4fa; font-size: 1.1em; background: rgba(0,0,0,0.2); padding: 1px 4px; border-radius: 4px; }
+        
+        /* SVG Icons */
+        .icon { width: 18px; height: 18px; fill: currentColor; }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar for Chat History -->
+    <aside id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">🦙 Ollama UI</div>
+        </div>
+        <div style="padding: 0 10px;">
+            <button id="new-chat-btn" onclick="startNewChat()">➕ New Chat</button>
+        </div>
+        <div id="history-list">
+            <!-- History items inject here -->
+        </div>
+    </aside>
+
+    <!-- Main App Area -->
+    <div id="main-app">
+        
+        <!-- Drag & Drop Overlay -->
+        <div id="drop-overlay">
+            <h2>📁 Drop files here to attach</h2>
+        </div>
+
+        <header>
+            <div class="logo"></div>
+            <div class="controls">
+                <span id="status-indicator" class="status-offline">🔴 Offline</span>
+                <button class="control-btn" onclick="checkStatus()">🔄 Refresh</button>
+                <select id="model-select">
+                    <option value="">Select a Model...</option>
+                </select>
+            </div>
+        </header>
+
+        <main id="drop-zone">
+            <div class="chat-container" id="chat-box">
+                <!-- Chat messages inject here -->
+            </div>
+        </main>
+
+        <footer>
+            <div class="input-wrapper">
+                <!-- Multi-doc container -->
+                <div id="attachment-container"></div>
+                
+                <div class="input-box">
+                    <input type="file" id="file-input" accept=".txt,.md,.csv,.js,.py,.java,.html,.css,.json" multiple hidden>
+                    <button id="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach Files">📎</button>
+                    <textarea id="prompt-input" placeholder="Type a message... (Drop files here) (Shift+Enter for new line)" rows="1"></textarea>
+                    <button id="send-btn" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        const OLLAMA_URL = "http://127.0.0.1:11434";
+        let chatHistory = []; // Current conversational context for API
+        let attachedFiles = []; // Array of { name, content }
+        let abortController = null;
+        
+        // Session Management via LocalStorage
+        let chatSessions = JSON.parse(localStorage.getItem('ollama_sessions')) || [];
+        let currentSessionId = null;
+
+        // UI Elements
+        const statusInd = document.getElementById('status-indicator');
+        const modelSelect = document.getElementById('model-select');
+        const chatBox = document.getElementById('chat-box');
+        const promptInput = document.getElementById('prompt-input');
+        const sendBtn = document.getElementById('send-btn');
+        const fileInput = document.getElementById('file-input');
+        const attachmentContainer = document.getElementById('attachment-container');
+        const historyList = document.getElementById('history-list');
+        const dropOverlay = document.getElementById('drop-overlay');
+
+        // Copy Icon SVG
+        const copyIconSvg = `<svg class="icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`;
+        const checkIconSvg = `<svg class="icon" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+
+        // --- Core Utilities (Formatting from original preserved) ---
+        function escapeHtml(unsafe) { return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+        
+        function formatInline(text) {
+            text = text.replace(/\$([^\$]+)\$/g, (match, p1) => `<span class="math-inline">${p1}</span>`);
+            text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            text = text.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
+            text = text.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+            return text;
+        }
+
+        function buildTable(lines) {
+            let tHtml = `<div class="table-wrapper"><table>`;
+            let hasHeader = lines.length > 1 && lines[1].replace(/[\s\|\-:]/g, '') === '';
+            lines.forEach((line, index) => {
+                if (index === 1 && hasHeader) return;
+                let cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+                let cellTag = (index === 0 && hasHeader) ? 'th' : 'td';
+                
+                if (index === 0 && hasHeader) tHtml += `<thead><tr>`;
+                else if (index === 0 && !hasHeader) tHtml += `<tbody><tr>`;
+                else if (index === 2 && hasHeader) tHtml += `<tbody><tr>`;
+                else tHtml += `<tr>`;
+                
+                cells.forEach(c => { tHtml += `<${cellTag}>${formatInline(escapeHtml(c))}</${cellTag}>`; });
+                
+                tHtml += `</tr>`;
+                if (index === 0 && hasHeader) tHtml += `</thead>`;
+            });
+            tHtml += `</tbody></table></div>`;
+            return tHtml;
+        }
+
+        function renderMarkdown(md) {
+            let html = ""; let inCodeBlock = false; let codeContent = ""; let codeLang = ""; let tableBuffer = [];
+            const lines = md.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i]; let trimmed = line.trim();
+                if (trimmed.startsWith('```')) {
+                    if (inCodeBlock) {
+                        html += `<div class="code-block"><div class="code-header"><span>${codeLang || 'code'}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.innerText); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy',2000)">Copy</button></div><pre><code>${escapeHtml(codeContent.trimEnd())}</code></pre></div>`;
+                        inCodeBlock = false; codeContent = ""; codeLang = "";
+                    } else { inCodeBlock = true; codeLang = trimmed.replace(/```/g, ''); }
+                    continue;
+                }
+                if (inCodeBlock) { codeContent += line + '\n'; continue; }
+                if (trimmed.startsWith('|')) { tableBuffer.push(trimmed); continue; } 
+                else if (tableBuffer.length > 0) { html += buildTable(tableBuffer); tableBuffer = []; }
+
+                line = escapeHtml(line); line = formatInline(line); trimmed = line.trim();
+                if (trimmed.match(/^(\-\-\-|\*\*\*|___)$/)) html += `<hr>`;
+                else if (trimmed.match(/^#{1,6}\s/)) { let level = trimmed.match(/^(#+)/)[1].length; let text = trimmed.replace(/^#+\s/, ''); html += `<h${level}>${text}</h${level}>`; }
+                else if (trimmed.match(/^[\-\*]\s+/)) { let text = trimmed.replace(/^[\-\*]\s+/, ''); html += `<div class="list-item"><span class="list-bullet">&bull;</span><span>${text}</span></div>`; }
+                else if (trimmed.match(/^(\d+)\.\s+/)) { let match = trimmed.match(/^(\d+)\.\s+/); let num = match[1]; let text = trimmed.substring(match[0].length); html += `<div class="list-item"><span class="list-bullet">${num}.</span><span>${text}</span></div>`; }
+                else if (trimmed === '') html += `<br>`;
+                else html += line + '<br>';
+            }
+            if (tableBuffer.length > 0) html += buildTable(tableBuffer);
+            if (inCodeBlock) html += `<div class="code-block"><div class="code-header"><span>${codeLang || 'code'}</span></div><pre><code>${escapeHtml(codeContent.trimEnd())}</code></pre></div>`;
+            return html;
+        }
+
+        // --- Session Management (History) ---
+        function saveSession() {
+            if (!currentSessionId) return;
+            const session = chatSessions.find(s => s.id === currentSessionId);
+            if (session) {
+                session.history = chatHistory;
+                if (session.title === "New Chat" && chatHistory.length > 0) {
+                    // Auto-generate title from first user message
+                    const firstMsg = chatHistory.find(m => m.role === 'user');
+                    if (firstMsg) session.title = firstMsg.content.substring(0, 30).replace(/\n/g, ' ') + '...';
+                }
+            }
+            localStorage.setItem('ollama_sessions', JSON.stringify(chatSessions));
+            renderHistoryList();
+        }
+
+        function loadSession(id) {
+            const session = chatSessions.find(s => s.id === id);
+            if (!session) return;
+            currentSessionId = id;
+            chatHistory = session.history || [];
+            chatBox.innerHTML = "";
+            chatHistory.forEach(msg => appendMessageDOM(msg.role, msg.content));
+            renderHistoryList();
+            setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
+        }
+
+        function startNewChat() {
+            currentSessionId = Date.now().toString();
+            chatHistory = [];
+            chatSessions.unshift({ id: currentSessionId, title: "New Chat", history: [] });
+            chatBox.innerHTML = `<div class="message assistant"><div class="avatar">🤖</div><div class="content">Hello! Model selected? Drop your files or say hi!</div></div>`;
+            saveSession();
+        }
+
+        function renderHistoryList() {
+            historyList.innerHTML = "";
+            chatSessions.forEach(session => {
+                const div = document.createElement('div');
+                div.className = `history-item ${session.id === currentSessionId ? 'active' : ''}`;
+                div.textContent = session.title || "Empty Chat";
+                div.onclick = () => loadSession(session.id);
+                historyList.appendChild(div);
+            });
+        }
+
+        // --- Check Server & Auto-Select Preferred Model ---
+        async function checkStatus() {
+            try {
+                statusInd.textContent = "Checking...";
+                statusInd.className = "";
+                const response = await fetch(`${OLLAMA_URL}/api/tags`);
+                if (!response.ok) throw new Error("Network response was not ok");
+                const data = await response.json();
+                
+                statusInd.textContent = "🟢 Active";
+                statusInd.className = "status-online";
+                modelSelect.innerHTML = "";
+                
+                if (data.models.length === 0) {
+                    modelSelect.innerHTML = "<option value=''>No models found. Run 'ollama run <model>'</option>";
+                } else {
+                    data.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.textContent = m.name;
+                        // Auto-select logic tailored to favor Gemma families
+                        if (m.name.toLowerCase().includes('gemma')) {
+                            opt.selected = true; 
+                        }
+                        modelSelect.appendChild(opt);
+                    });
+                }
+            } catch (error) {
+                console.error(error);
+                statusInd.textContent = "🔴 Offline (Enable CORS)";
+                statusInd.className = "status-offline";
+                modelSelect.innerHTML = "<option value=''>Cannot connect...</option>";
+            }
+        }
+
+        // --- Multi-File Attachment & Drag/Drop Logic ---
+        async function processFiles(files) {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const text = await file.text();
+                attachedFiles.push({ name: file.name, content: text });
+            }
+            renderAttachments();
+        }
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) processFiles(e.target.files);
+            e.target.value = ""; // Reset for next selection
+        });
+
+        function renderAttachments() {
+            attachmentContainer.innerHTML = "";
+            attachedFiles.forEach((file, index) => {
+                const chip = document.createElement('div');
+                chip.className = "attachment-chip";
+                chip.innerHTML = `📎 ${file.name} <button onclick="removeAttachment(${index})">✖</button>`;
+                attachmentContainer.appendChild(chip);
+            });
+        }
+
+        window.removeAttachment = function(index) {
+            attachedFiles.splice(index, 1);
+            renderAttachments();
+        }
+
+        // Global Drag and Drop event listeners
+        const dropTarget = document.getElementById('main-app');
+        dropTarget.addEventListener('dragover', (e) => { e.preventDefault(); dropOverlay.style.display = 'flex'; });
+        dropOverlay.addEventListener('dragleave', (e) => { e.preventDefault(); dropOverlay.style.display = 'none'; });
+        dropOverlay.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropOverlay.style.display = 'none';
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                processFiles(e.dataTransfer.files);
+            }
+        });
+
+        promptInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+        });
+
+        // --- Message Rendering & Full Copy Button ---
+        function copyFullMessage(btnElement, rawText) {
+            navigator.clipboard.writeText(rawText).then(() => {
+                btnElement.innerHTML = checkIconSvg;
+                btnElement.style.color = "var(--success)";
+                setTimeout(() => {
+                    btnElement.innerHTML = copyIconSvg;
+                    btnElement.style.color = "";
+                }, 2000);
+            });
+        }
+
+        function appendMessageDOM(role, rawText) {
+            const wrapperDiv = document.createElement('div');
+            wrapperDiv.className = `message-wrapper`;
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'avatar';
+            avatarDiv.textContent = role === 'user' ? '👤' : '🤖';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'content';
+            
+            // Format output for UI
+            if (role === 'user') {
+                contentDiv.textContent = rawText; 
+            } else {
+                contentDiv.innerHTML = renderMarkdown(rawText);
+            }
+
+            // Copy full message button
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'msg-copy-btn';
+            copyBtn.innerHTML = copyIconSvg;
+            copyBtn.title = "Copy full message";
+            copyBtn.onclick = () => copyFullMessage(copyBtn, rawText);
+
+            msgDiv.appendChild(avatarDiv);
+            msgDiv.appendChild(contentDiv);
+            wrapperDiv.appendChild(msgDiv);
+            wrapperDiv.appendChild(copyBtn);
+            
+            chatBox.appendChild(wrapperDiv);
+            window.scrollTo(0, document.body.scrollHeight);
+            
+            return { wrapper: wrapperDiv, contentNode: contentDiv, copyBtn: copyBtn };
+        }
+
+        // --- Core Send Message Logic ---
+        async function sendMessage() {
+            let text = promptInput.value.trim();
+            const selectedModel = modelSelect.value;
+            
+            if (!text && attachedFiles.length === 0) return;
+            if (!selectedModel) { alert("Please select a model from the top right."); return; }
+
+            // Combine files into prompt
+            let fullUserPrompt = text;
+            if (attachedFiles.length > 0) {
+                let fileContext = attachedFiles.map(f => `--- File: ${f.name} ---\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+                fullUserPrompt = `I have provided the following documents for context:\n\n${fileContext}\n\n${text}`;
+                attachedFiles = [];
+                renderAttachments();
+            }
+
+            // If no session exists, create one
+            if (!currentSessionId) startNewChat();
+
+            chatHistory.push({ role: "user", content: fullUserPrompt });
+            appendMessageDOM('user', fullUserPrompt);
+            saveSession();
+            
+            promptInput.value = "";
+            promptInput.style.height = 'auto'; // Reset height
+            
+            // Initialize Bot Response UI
+            const { contentNode, copyBtn } = appendMessageDOM('assistant', '');
+            sendBtn.disabled = true;
+            abortController = new AbortController();
+
+            try {
+                const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: abortController.signal,
+                    body: JSON.stringify({ model: selectedModel, messages: chatHistory, stream: true })
+                });
+
+                if (!response.ok) throw new Error("API Error");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let rawBotMessage = ""; 
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n').filter(line => line.trim() !== "");
+                    
+                    for (const line of lines) {
+                        const json = JSON.parse(line);
+                        if (json.message && json.message.content) {
+                            rawBotMessage += json.message.content;
+                            contentNode.innerHTML = renderMarkdown(rawBotMessage);
+                            
+                            // Auto-scroll while streaming
+                            const isNearBottom = document.body.scrollHeight - window.scrollY - window.innerHeight < 100;
+                            if(isNearBottom) window.scrollTo(0, document.body.scrollHeight);
+                        }
+                    }
+                }
+                
+                // Update history and the copy button's target text
+                chatHistory.push({ role: "assistant", content: rawBotMessage });
+                copyBtn.onclick = () => copyFullMessage(copyBtn, rawBotMessage);
+                saveSession();
+
+            } catch (error) {
+                if(error.name === 'AbortError') {
+                    contentNode.innerHTML += "<br><em>[Stopped]</em>";
+                } else {
+                    contentNode.textContent = "Error connecting to Ollama. Check CORS/Terminal.";
+                }
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        // Auto-resize textarea
+        promptInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight < 200 ? this.scrollHeight : 200) + 'px';
+        });
+
+        // Init App
+        if (chatSessions.length === 0) {
+            startNewChat();
+        } else {
+            loadSession(chatSessions[0].id);
+        }
+        checkStatus();
+
+    </script>
+</body>
+</html>
