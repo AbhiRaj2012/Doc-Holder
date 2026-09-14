@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manifest Graph — Project Structure Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0d12;
+    --surface:#12151c;
+    --surface-2:#181c25;
+    --border:#262b36;
+    --border-soft:#1d212b;
+    --text:#dfe3ea;
+    --text-dim:#7d8695;
+    --text-faint:#4c5261;
+    --file:#ef6461;
+    --class:#f2b84b;
+    --func:#35c9b0;
+    --edge-def:#3a4150;
+    --edge-call:#6e7ee0;
+    --accent:#f2b84b;
+    --danger:#ef6461;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%; width:100%;
+    background:var(--bg); color:var(--text);
+    font-family:var(--mono);
+    overflow:hidden;
+  }
+  #app{ position:relative; width:100vw; height:100vh; display:flex; flex-direction:column; }
+
+  /* ---------- Drop / load screen ---------- */
+  #dropzone{
+    position:fixed; inset:0; z-index:50;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(242,184,75,0.05), transparent 40%),
+      radial-gradient(circle at 80% 70%, rgba(53,201,176,0.06), transparent 45%),
+      var(--bg);
+  }
+  #dropzone.hidden{ display:none; }
+  .drop-card{
+    width:min(560px, 90vw);
+    border:1px solid var(--border);
+    background:var(--surface);
+    border-radius:10px;
+    padding:40px 36px;
+    text-align:left;
+  }
+  .drop-card.dragover{ border-color:var(--accent); background:var(--surface-2); }
+  .drop-eyebrow{
+    font-size:11px; letter-spacing:0.02em; color:var(--text-dim);
+    display:flex; align-items:center; gap:8px; margin-bottom:18px;
+  }
+  .drop-eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--func); flex:none; }
+  .drop-title{ font-size:20px; font-weight:600; color:var(--text); margin:0 0 10px; line-height:1.4; }
+  .drop-sub{ font-size:13px; color:var(--text-dim); line-height:1.7; margin:0 0 26px; }
+  .drop-sub code{ color:var(--class); background:var(--surface-2); padding:1px 5px; border-radius:3px; }
+  .drop-target{
+    border:1px dashed var(--border);
+    border-radius:8px;
+    padding:26px 20px;
+    text-align:center;
+    color:var(--text-dim);
+    font-size:12.5px;
+    cursor:pointer;
+    transition:border-color .15s, color .15s;
+  }
+  .drop-target:hover{ border-color:var(--func); color:var(--text); }
+  .drop-target b{ color:var(--text); font-weight:600; }
+  .drop-error{ margin-top:14px; font-size:12px; color:var(--danger); min-height:16px; }
+  #fileInput{ display:none; }
+
+  /* ---------- Header ---------- */
+  header{
+    flex:none; height:52px;
+    display:flex; align-items:center; gap:14px;
+    padding:0 16px;
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+    z-index:10;
+  }
+  .brand{ display:flex; align-items:center; gap:8px; margin-right:6px; flex:none; }
+  .brand .mark{ width:8px; height:8px; border-radius:2px; background:var(--func); transform:rotate(45deg); }
+  .brand span{ font-size:13px; font-weight:600; letter-spacing:.01em; color:var(--text); white-space:nowrap; }
+
+  .search-wrap{ position:relative; width:260px; flex:none; }
+  .search-wrap svg{ position:absolute; left:9px; top:50%; transform:translateY(-50%); width:13px; height:13px; stroke:var(--text-dim); pointer-events:none; }
+  #search{
+    width:100%; background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; padding:7px 10px 7px 28px; color:var(--text);
+    font-family:var(--mono); font-size:12.5px; outline:none;
+  }
+  #search:focus{ border-color:var(--func); }
+  #search::placeholder{ color:var(--text-faint); }
+
+  .legend{ display:flex; align-items:center; gap:6px; }
+  .legend-item{
+    display:flex; align-items:center; gap:6px;
+    padding:6px 10px; border-radius:6px; border:1px solid transparent;
+    font-size:12px; color:var(--text-dim); cursor:pointer; user-select:none;
+    background:var(--surface); transition:background .12s, color .12s, border-color .12s;
+  }
+  .legend-item:hover{ background:var(--surface-2); }
+  .legend-item.active{ color:var(--text); border-color:var(--border); background:var(--surface-2); }
+  .legend-item .swatch{ width:9px; height:9px; border-radius:50%; flex:none; }
+  .legend-item.dim .swatch{ opacity:.25; }
+  .legend-item.dim{ color:var(--text-faint); }
+
+  .spacer{ flex:1; }
+  .btn{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim);
+    font-family:var(--mono); font-size:12px; padding:7px 12px; border-radius:6px;
+    cursor:pointer; white-space:nowrap;
+  }
+  .btn:hover{ color:var(--text); border-color:var(--text-faint); }
+
+  /* ---------- Main layout ---------- */
+  main{ flex:1; position:relative; display:flex; min-height:0; }
+  #canvas-wrap{ flex:1; position:relative; min-width:0; }
+  svg#graph{ width:100%; height:100%; display:block; cursor:grab; }
+  svg#graph:active{ cursor:grabbing; }
+
+  .link{ stroke:var(--edge-def); stroke-width:1; fill:none; pointer-events:stroke; }
+  .link.call{ stroke:var(--edge-call); stroke-dasharray:2,2; opacity:.55; stroke-width:6; }
+  .link{ stroke:var(--edge-def); stroke-width:1; fill:none; }
+  .link.call{ stroke:var(--edge-call); stroke-dasharray:2,2; opacity:.55; }
+  .link.dim{ opacity:.04; }
+  .node-label{
+    font-size:8.5px; fill:var(--text-dim); pointer-events:none;
+    paint-order:stroke; stroke:var(--bg); stroke-width:2.5px;
+  }
+  .node-label.dim{ opacity:.08; }
+  .node circle{ stroke:var(--bg); stroke-width:1.4px; cursor:pointer; }
+  .node.dim circle{ opacity:.10; }
+  .node.selected circle{ stroke:#fff; stroke-width:2px; }
+  .node.entry circle{ stroke:var(--class); stroke-width:2px; stroke-dasharray:1,0; }
+
+  /* ---------- Stats + zoom controls ---------- */
+  #stats{
+    position:absolute; left:14px; bottom:14px;
+    font-size:11.5px; color:var(--text-dim);
+    background:rgba(18,21,28,0.85); border:1px solid var(--border);
+    padding:6px 10px; border-radius:6px; backdrop-filter:blur(3px);
+  }
+  #stats b{ color:var(--text); font-weight:600; }
+
+  #zoomctl{
+    position:absolute; right:14px; bottom:14px;
+    display:flex; align-items:center; gap:2px;
+    background:rgba(18,21,28,0.85); border:1px solid var(--border);
+    border-radius:6px; overflow:hidden; backdrop-filter:blur(3px);
+  }
+  #zoomctl button{
+    width:30px; height:28px; background:transparent; border:none; color:var(--text-dim);
+    font-family:var(--mono); font-size:15px; cursor:pointer; border-right:1px solid var(--border-soft);
+  }
+  #zoomctl button:last-child{ border-right:none; }
+  #zoomctl button:hover{ color:var(--text); background:var(--surface-2); }
+
+  /* ---------- Side panel ---------- */
+  #panel{
+    width:0; flex:none; overflow:hidden;
+    background:var(--surface); border-left:1px solid var(--border);
+    transition:width .16s ease;
+  }
+  #panel.open{ width:320px; }
+  #panel-inner{ width:320px; height:100%; overflow-y:auto; padding:18px; }
+  #panel-inner::-webkit-scrollbar{ width:6px; }
+  #panel-inner::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
+  .panel-close{
+    float:right; background:none; border:none; color:var(--text-dim); font-size:16px; cursor:pointer; line-height:1;
+  }
+  .panel-kind{
+    display:inline-block; font-size:10px; padding:3px 7px; border-radius:4px;
+    letter-spacing:.02em; margin-bottom:10px; font-weight:600;
+  }
+  .panel-name{ font-size:15px; font-weight:600; color:var(--text); margin:0 0 4px; word-break:break-word; line-height:1.4; }
+  .panel-path{ font-size:11px; color:var(--text-dim); margin:0 0 16px; word-break:break-all; }
+  .panel-section{ margin-bottom:16px; }
+  .panel-label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); margin-bottom:6px; }
+  .panel-body{ font-size:12.5px; color:var(--text); line-height:1.6; white-space:pre-wrap; }
+  .panel-sig{
+    font-size:11.5px; color:var(--func); background:var(--surface-2); border:1px solid var(--border-soft);
+    padding:8px 10px; border-radius:6px; overflow-x:auto; white-space:pre;
+  }
+  .chip-row{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{
+    font-size:11px; background:var(--surface-2); border:1px solid var(--border-soft);
+    color:var(--text-dim); padding:4px 8px; border-radius:5px; cursor:default;
+  }
+  .chip.clickable{ cursor:pointer; }
+  .chip.clickable:hover{ border-color:var(--func); color:var(--text); }
+  .panel-empty{ color:var(--text-faint); font-size:12px; margin-top:60px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ================= LOAD SCREEN ================= -->
+  <div id="dropzone">
+    <div class="drop-card" id="dropCard">
+      <div class="drop-eyebrow"><span class="dot"></span> MANIFEST GRAPH</div>
+      <p class="drop-title">Visualize a codebase manifest</p>
+      <p class="drop-sub">
+        Load the <code>project_manifest.json</code> produced by <code>codebase_analyzer.py</code>
+        (found in the run's output folder, next to <code>PROJECT_MAP.md</code>). Everything runs
+        locally in this file — nothing is uploaded anywhere.
+      </p>
+      <div class="drop-target" id="dropTarget">
+        <b>Click to choose a file</b> or drag &amp; drop <code>project_manifest.json</code> here
+      </div>
+      <div class="drop-error" id="dropError"></div>
+      <input type="file" id="fileInput" accept="application/json,.json">
+    </div>
+  </div>
+
+  <!-- ================= MAIN APP ================= -->
+  <header id="topbar" style="display:none;">
+    <div class="brand"><span class="mark"></span><span id="brandLabel">manifest graph</span></div>
+
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="search" type="text" placeholder="Search symbols, files, signatures…" autocomplete="off">
+    </div>
+
+    <div class="legend" id="legend">
+      <div class="legend-item active" data-group="File"><span class="swatch" style="background:var(--file)"></span>File</div>
+      <div class="legend-item active" data-group="Class"><span class="swatch" style="background:var(--class)"></span>Class</div>
+      <div class="legend-item active" data-group="Function"><span class="swatch" style="background:var(--func)"></span>Function</div>
+      <span style="border-left: 1px solid var(--border); height: 16px; margin: 0 4px;"></span>
+      <div class="legend-item active" data-group="calls" id="toggleCalls"><span class="swatch" style="background:var(--edge-call);border-radius:2px;"></span>Calls</div>
+    </div>
+
+    <div class="spacer"></div>
+    <button class="btn" id="loadNew">Load different manifest</button>
+  </header>
+
+  <main style="display:none;" id="mainArea">
+    <div id="canvas-wrap">
+      <svg id="graph"></svg>
+          <div id="tooltip" style="position:absolute;pointer-events:none;display:none;z-index:20;
+            background:rgba(18,21,28,0.95);border:1px solid var(--border);border-radius:6px;
+            padding:6px 9px;font-size:11.5px;color:var(--text);max-width:280px;line-height:1.5;">
+          </div>
+      <div id="stats"></div>
+      <div id="zoomctl">
+        <button id="zoomOut" title="Zoom out">–</button>
+        <button id="zoomReset" title="Fit to screen">⊙</button>
+        <button id="zoomIn" title="Zoom in">+</button>
+      </div>
+    </div>
+    <div id="panel">
+      <div id="panel-inner"><div class="panel-empty">Click a node to inspect it</div></div>
+    </div>
+  </main>
+
+</div>
+
+<script>
+
+  
+(function(){
+
+  // ============================================================
+  // 1. LOAD MANIFEST (file picker / drag-drop)
+  // ============================================================
+  const dropzone   = document.getElementById('dropzone');
+  const dropCard   = document.getElementById('dropCard');
+  const dropTarget = document.getElementById('dropTarget');
+  const dropError  = document.getElementById('dropError');
+  const fileInput  = document.getElementById('fileInput');
+
+  dropTarget.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => { if (e.target.files[0]) readFile(e.target.files[0]); });
+
+  ['dragenter','dragover'].forEach(evt =>
+    dropCard.addEventListener(evt, e => { e.preventDefault(); dropCard.classList.add('dragover'); }));
+  ['dragleave','drop'].forEach(evt =>
+    dropCard.addEventListener(evt, e => { e.preventDefault(); dropCard.classList.remove('dragover'); }));
+  dropCard.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0];
+    if (f) readFile(f);
+  });
+
+  function readFile(file){
+    dropError.textContent = '';
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data;
+      try { data = JSON.parse(reader.result); }
+      catch(err){ dropError.textContent = 'Could not parse this file as JSON: ' + err.message; return; }
+      if (!data || !Array.isArray(data.files)) {
+        dropError.textContent = 'This does not look like a project_manifest.json (missing "files" array).';
+        return;
+      }
+      boot(data, file.name);
+    };
+    reader.onerror = () => { dropError.textContent = 'Could not read the file.'; };
+    reader.readAsText(file);
+  }
+
+  document.getElementById('loadNew').addEventListener('click', () => {
+    dropzone.classList.remove('hidden');
+    document.getElementById('topbar').style.display = 'none';
+    document.getElementById('mainArea').style.display = 'none';
+  });
+
+  // ============================================================
+  // 2. BUILD GRAPH FROM MANIFEST
+  // ============================================================
+  function basename(p){ const parts = p.split(/[\\/]/); return parts[parts.length-1] || p; }
+
+  function buildGraph(manifest){
+    const nodes = [];
+    const links = [];
+    const nodeById = new Map();
+    const symbolIndex = new Map(); // lowercase name -> [{id, path}]
+    const entrySet = new Set(manifest.entry_points || []);
+
+    function addNode(n){
+      if (nodeById.has(n.id)) return nodeById.get(n.id);
+      nodeById.set(n.id, n);
+      nodes.push(n);
+      return n;
+    }
+
+    function addLink(source, target, type, reason){
+      if (!source || !target || source === target) return;
+      links.push({ source, target, type, reason: reason || null });
+    }
+
+    manifest.files.forEach(fm => {
+      const fileId = 'F::' + fm.path;
+      addNode({
+        id: fileId, label: basename(fm.path), group: 'File',
+        path: fm.path, language: fm.language, total_lines: fm.total_lines,
+        file_summary: fm.file_summary, imports: fm.imports || [],
+        isEntry: entrySet.has(fm.path)
+      });
+
+      (fm.symbols || []).forEach(s => {
+        const ownerPrefix = s.parent ? (s.parent + '.') : '';
+        const symId = 'S::' + fm.path + '::' + ownerPrefix + s.name;
+        const group = s.kind === 'class' ? 'Class' : 'Function'; // function / method / block -> Function
+                addNode({
+          id: symId, label: s.name, group, kind: s.kind, parent: s.parent,
+          path: fm.path, line_start: s.line_start, line_end: s.line_end,
+          signature: s.signature, purpose: s.purpose,
+          calls: s.calls || [], call_reasons: s.call_reasons || {}, dom_ids: s.dom_ids || []
+        });
+
+        // DEFINES edge: file -> top-level symbol, class -> method/body-block
+        if (s.parent) {
+          const parentId = 'S::' + fm.path + '::' + s.parent;
+          addLink(parentId, symId, 'DEFINES');
+        } else {
+          addLink(fileId, symId, 'DEFINES');
+        }
+
+        const key = s.name.toLowerCase();
+        if (!symbolIndex.has(key)) symbolIndex.set(key, []);
+        symbolIndex.get(key).push({ id: symId, path: fm.path });
+      });
+    });
+
+    // CALLS edges (best-effort resolution against the symbol index)
+        // was: raw callName.toLowerCase() lookup
+    function normalizeCallName(raw){
+      let s = String(raw).trim();
+      s = s.replace(/\(.*$/, '');   // "foo(x)" -> "foo"
+      s = s.split(/[.\[]/).pop();   // "self.move" / "ball.move" -> "move"
+      return s.toLowerCase().trim();
+    }
+
+    let unresolved = 0;
+    nodes.filter(n => n.calls && n.calls.length).forEach(n => {
+      n.calls.forEach(callName => {
+        const key = normalizeCallName(callName);
+        if (!key) return;
+        const candidates = symbolIndex.get(key);
+        if (!candidates || !candidates.length) { unresolved++; return; }
+        const sameFile = candidates.find(c => c.path === n.path);
+        const target = (sameFile || candidates[0]).id;
+        const reason = n.call_reasons && n.call_reasons[callName];
+        if (target !== n.id) addLink(n.id, target, 'CALLS', reason);
+      });
+    });
+
+    return { nodes, links, unresolved };
+  }
+
+  // ============================================================
+  // 3. RENDER
+  // ============================================================
+  let simulation, svg, g, linkSel, nodeSel, labelSel, zoomBehavior;
+  let allNodes = [], allLinks = [];
+  let activeGroups = new Set(['File','Class','Function']);
+  let showCalls = true;
+  let selectedId = null;
+
+  const RADIUS = { File: 9, Class: 7, Function: 5 };
+  const COLOR  = { File: 'var(--file)', Class: 'var(--class)', Function: 'var(--func)' };
+
+  function boot(manifest, fileName){
+    const { nodes, links, unresolved } = buildGraph(manifest);
+    allNodes = nodes; allLinks = links;
+
+    document.getElementById('brandLabel').textContent =
+      (manifest.root ? basename(manifest.root) : fileName) + ' — manifest graph';
+
+    dropzone.classList.add('hidden');
+    document.getElementById('topbar').style.display = 'flex';
+    document.getElementById('mainArea').style.display = 'flex';
+
+    renderGraph();
+    updateStats(unresolved);
+  }
+
+  function renderGraph(){
+    const wrap = document.getElementById('canvas-wrap');
+    const width = wrap.clientWidth, height = wrap.clientHeight;
+
+    svg = d3.select('#graph').attr('viewBox', [0,0,width,height]);
+    svg.selectAll('*').remove();
+    g = svg.append('g');
+
+    zoomBehavior = d3.zoom().scaleExtent([0.08, 6]).on('zoom', ev => g.attr('transform', ev.transform));
+    svg.call(zoomBehavior);
+    svg.on('click', () => selectNode(null));
+
+    linkSel = g.append('g').attr('class','links').selectAll('line')
+      .data(allLinks).join('line')
+      .attr('class', d => 'link' + (d.type === 'CALLS' ? ' call' : ''));
+
+    nodeSel = g.append('g').attr('class','nodes').selectAll('g')
+      .data(allNodes, d => d.id).join('g')
+      .attr('class', d => 'node' + (d.isEntry ? ' entry' : ''))
+      .call(drag());
+
+    nodeSel.append('circle')
+      .attr('r', d => RADIUS[d.group] || 5)
+      .attr('fill', d => COLOR[d.group] || '#888');
+
+    nodeSel.on('click', (ev,d) => { ev.stopPropagation(); selectNode(d.id); })
+           .append('title').text(d => d.label);
+
+    const tip = document.getElementById('tooltip');
+    function showTip(html, ev){
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+      const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
+      tip.style.left = (ev.clientX - wrap.left + 14) + 'px';
+      tip.style.top  = (ev.clientY - wrap.top + 14) + 'px';
+    }
+    function hideTip(){ tip.style.display = 'none'; }
+
+    nodeSel.on('mousemove', (ev,d) => {
+      const extra = d.group === 'File' ? (d.file_summary||'') : (d.purpose||'');
+      showTip(`<b>${escapeHtml(d.parent ? d.parent+'.'+d.label : d.label)}</b><br>${escapeHtml(extra)}`, ev);
+    }).on('mouseleave', hideTip);
+
+    linkSel.on('mousemove', (ev,d) => {
+      if (d.type !== 'CALLS') { hideTip(); return; }
+      const reason = d.reason || `calls \`${d.target.label}\``;
+      showTip(`<b>${escapeHtml(d.source.label)}</b> → <b>${escapeHtml(d.target.label)}</b><br>${escapeHtml(reason)}`, ev);
+    }).on('mouseleave', hideTip);
+
+
+    labelSel = g.append('g').attr('class','labels').selectAll('text')
+      .data(allNodes, d => d.id).join('text')
+      .attr('class','node-label')
+      .attr('dy', d => (RADIUS[d.group]||5) + 9)
+      .attr('text-anchor','middle')
+      .text(d => d.label);
+
+    simulation = d3.forceSimulation(allNodes)
+      .force('link', d3.forceLink(allLinks).id(d=>d.id)
+        .distance(d => d.type === 'CALLS' ? 90 : 46)
+        .strength(d => d.type === 'CALLS' ? 0.15 : 0.7))
+      .force('charge', d3.forceManyBody().strength(-140).distanceMax(400))
+      .force('center', d3.forceCenter(width/2, height/2))
+      .force('collide', d3.forceCollide().radius(d => (RADIUS[d.group]||5) + 10))
+      .on('tick', ticked);
+
+    // settle, then relax so it isn't a permanent CPU hog on big graphs
+    simulation.alpha(1).restart();
+    setTimeout(() => { if (simulation.alpha() < 0.05) simulation.alphaTarget(0); }, 4000);
+
+    function ticked(){
+      linkSel
+        .attr('x1', d=>d.source.x).attr('y1', d=>d.source.y)
+        .attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
+      nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      labelSel.attr('x', d=>d.x).attr('y', d=>d.y);
+    }
+
+    function drag(){
+      return d3.drag()
+        .on('start', (ev,d) => { if(!ev.active) simulation.alphaTarget(0.25).restart(); d.fx=d.x; d.fy=d.y; })
+        .on('drag',  (ev,d) => { d.fx=ev.x; d.fy=ev.y; })
+        .on('end',   (ev,d) => { if(!ev.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; });
+    }
+
+    applyFilters();
+    window.addEventListener('resize', () => {
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      svg.attr('viewBox', [0,0,w,h]);
+      simulation.force('center', d3.forceCenter(w/2,h/2));
+    });
+  }
+
+  // ---------- filters: legend toggles + search ----------
+  function applyFilters(){
+    const q = document.getElementById('search').value.trim().toLowerCase();
+
+    const matches = d => {
+      if (!activeGroups.has(d.group)) return false;
+      if (!q) return true;
+      return (d.label && d.label.toLowerCase().includes(q)) ||
+             (d.path && d.path.toLowerCase().includes(q)) ||
+             (d.signature && d.signature.toLowerCase().includes(q)) ||
+             (d.purpose && d.purpose.toLowerCase().includes(q));
+    };
+
+    nodeSel.classed('dim', d => !matches(d));
+    labelSel.classed('dim', d => !matches(d));
+    linkSel.classed('dim', d => {
+      const linkOk = d.type !== 'CALLS' || showCalls;
+      return !linkOk || !matches(d.source) || !matches(d.target);
+    });
+    linkSel.style('display', d => (d.type === 'CALLS' && !showCalls) ? 'none' : null);
+
+    const visibleCount = allNodes.filter(matches).length;
+    const visibleEdges = allLinks.filter(d => (d.type!=='CALLS'||showCalls) && matches(d.source) && matches(d.target)).length;
+    updateStats(null, visibleCount, visibleEdges);
+  }
+
+  document.getElementById('search').addEventListener('input', applyFilters);
+
+document.getElementById('legend').addEventListener('click', e => {
+    const item = e.target.closest('.legend-item');
+    if (!item) return;
+    const group = item.dataset.group;
+
+    if (group === 'calls') {
+      showCalls = !showCalls;
+      item.classList.toggle('active', showCalls);
+      item.classList.toggle('dim', !showCalls);
+    } else {
+      if (activeGroups.has(group)) {
+        // Prevent deselecting all node groups at once
+        if (activeGroups.size > 1) {
+          activeGroups.delete(group);
+          item.classList.remove('active');
+          item.classList.add('dim');
+        }
+      } else {
+        activeGroups.add(group);
+        item.classList.add('active');
+        item.classList.remove('dim');
+      }
+    }
+    applyFilters();
+  });
+
+
+  // ---------- stats ----------
+  let lastUnresolved = 0;
+  function updateStats(unresolved, visibleCount, visibleEdges){
+    if (unresolved !== null && unresolved !== undefined) lastUnresolved = unresolved;
+    const n = visibleCount ?? allNodes.length;
+    const e = visibleEdges ?? allLinks.length;
+    document.getElementById('stats').innerHTML =
+      `<b>${n}</b> Nodes &nbsp;·&nbsp; <b>${e}</b> Edges` +
+      (lastUnresolved ? ` &nbsp;·&nbsp; ${lastUnresolved} unresolved calls (external/stdlib)` : '');
+  }
+
+  // ---------- zoom controls ----------
+  document.getElementById('zoomIn').addEventListener('click', () => svg.transition().duration(150).call(zoomBehavior.scaleBy, 1.4));
+  document.getElementById('zoomOut').addEventListener('click', () => svg.transition().duration(150).call(zoomBehavior.scaleBy, 0.7));
+  document.getElementById('zoomReset').addEventListener('click', () => {
+    const wrap = document.getElementById('canvas-wrap');
+    svg.transition().duration(200).call(zoomBehavior.transform, d3.zoomIdentity.translate(0,0).scale(1));
+  });
+
+  // ============================================================
+  // 4. DETAILS PANEL
+  // ============================================================
+  function selectNode(id){
+    selectedId = id;
+    nodeSel.classed('selected', d => d.id === id);
+    const panel = document.getElementById('panel');
+    const inner = document.getElementById('panel-inner');
+
+    if (!id) { panel.classList.remove('open'); inner.innerHTML = '<div class="panel-empty">Click a node to inspect it</div>'; return; }
+
+    const d = allNodes.find(n => n.id === id);
+    if (!d) return;
+    panel.classList.add('open');
+
+    const color = COLOR[d.group] || '#888';
+    let html = `<button class="panel-close" onclick="window.__closePanel()">✕</button>`;
+    html += `<div class="panel-kind" style="background:${color}22;color:${color};">${(d.kind||d.group).toUpperCase()}</div>`;
+    html += `<p class="panel-name">${escapeHtml(d.parent ? d.parent + '.' + d.label : d.label)}</p>`;
+
+    if (d.group === 'File') {
+      html += `<p class="panel-path">${escapeHtml(d.path)} · ${escapeHtml(d.language||'')} · ${d.total_lines||0} lines${d.isEntry ? ' · entry point' : ''}</p>`;
+      if (d.file_summary) html += section('Summary', escapeHtml(d.file_summary));
+      if (d.imports && d.imports.length) html += chipSection('Imports', d.imports);
+    } else {
+      html += `<p class="panel-path">${escapeHtml(d.path)} · lines ${d.line_start}–${d.line_end}</p>`;
+      if (d.signature) html += `<div class="panel-section"><div class="panel-label">Signature</div><div class="panel-sig">${escapeHtml(d.signature)}</div></div>`;
+      if (d.purpose) html += section('Purpose', escapeHtml(d.purpose));
+      if (d.calls && d.calls.length) html += chipSection('Calls', d.calls, true);
+      if (d.dom_ids && d.dom_ids.length) html += chipSection('DOM IDs / classes', d.dom_ids);
+    }
+
+    inner.innerHTML = html;
+
+    if (d.calls) {
+      inner.querySelectorAll('.chip.clickable').forEach(el => {
+        el.addEventListener('click', () => {
+          const name = el.dataset.name;
+          const target = allNodes.find(n => n.label.toLowerCase() === name.toLowerCase() && n.path === d.path)
+                      || allNodes.find(n => n.label.toLowerCase() === name.toLowerCase());
+          if (target) selectNode(target.id);
+        });
+      });
+    }
+  }
+  window.__closePanel = () => selectNode(null);
+
+  function section(label, body){
+    return `<div class="panel-section"><div class="panel-label">${label}</div><div class="panel-body">${body}</div></div>`;
+  }
+  function chipSection(label, items, clickable){
+    const chips = items.map(i => `<span class="chip${clickable?' clickable':''}" data-name="${escapeHtml(i)}">${escapeHtml(i)}</span>`).join('');
+    return `<div class="panel-section"><div class="panel-label">${label}</div><div class="chip-row">${chips}</div></div>`;
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+})();
+</script>
+</body>
+</html>
