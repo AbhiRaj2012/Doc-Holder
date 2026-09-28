@@ -1,0 +1,6 @@
+Step 1: Run This Script on Your Online Linux Machine
+Save the script below as build_offline_qt_bundle.sh on your online Ubuntu/Debian machine and run it:
+
+
+chmod +x build_offline_qt_bundle.sh
+./build_offline_qt_bundle.sh
