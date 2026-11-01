@@ -1,0 +1,21 @@
+Process
+
+1. Concatenate the Parts
+cat qt5_ubuntu24_offline.tar.gz.part* > qt5_ubuntu24_offline.tar.gz
+
+2. Verify Integrity with the SHA-256 Hash
+Before running any installation, compare the reconstructed file's hash against the hash generated on Windows:
+
+Bash
+# Print reconstructed archive hash
+sha256sum qt5_ubuntu24_offline.tar.gz
+
+# Display the expected hash from Windows
+cat checksum.txt
+
+
+chmod +x ~/02_install_offline.sh
+sudo ~/02_install_offline.sh
+
+
+Verification: Run qmake -v and gcc -v. Both will report installed versions without missing-symbol or linker errors. Launch the IDE with qtcreator & to confirm the Qt environment is active.
